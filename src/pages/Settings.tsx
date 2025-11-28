@@ -58,7 +58,9 @@ export default function SettingsPage() {
   useEffect(() => {
     async function loadAccountAndCategories() {
       setLoading(true);
-      const { data: { session } } = await supabase.auth.getSession();
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
       if (!session) {
         setLoading(false);
         return;
@@ -95,7 +97,7 @@ export default function SettingsPage() {
         budgetLimit: profileData.budget_limit ?? 25000,
         autoCategorize: profileData.auto_categorize ?? true,
         shared: profileData.shared ?? false,
-        twoFA: profileData.two_fa ?? false
+        twoFA: profileData.two_fa ?? false,
       });
 
       const { data: catData } = await supabase
@@ -126,34 +128,58 @@ export default function SettingsPage() {
   useEffect(() => {
     setSettingsChanged(
       pendingCategories.length > 0 ||
-      (initialSettings &&
-        (
-          language !== initialSettings.language ||
-          currency !== initialSettings.currency ||
-          alertLargeTx !== initialSettings.alertLargeTx ||
-          monthlyReport !== initialSettings.monthlyReport ||
-          reminders !== initialSettings.reminders ||
-          defaultCategory !== initialSettings.defaultCategory ||
-          budgetLimit !== initialSettings.budgetLimit ||
-          autoCategorize !== initialSettings.autoCategorize ||
-          shared !== initialSettings.shared ||
-          twoFA !== initialSettings.twoFA
-        )
-      )
+        (initialSettings &&
+          (language !== initialSettings.language ||
+            currency !== initialSettings.currency ||
+            alertLargeTx !== initialSettings.alertLargeTx ||
+            monthlyReport !== initialSettings.monthlyReport ||
+            reminders !== initialSettings.reminders ||
+            defaultCategory !== initialSettings.defaultCategory ||
+            budgetLimit !== initialSettings.budgetLimit ||
+            autoCategorize !== initialSettings.autoCategorize ||
+            shared !== initialSettings.shared ||
+            twoFA !== initialSettings.twoFA))
     );
   }, [
-    language, currency, alertLargeTx, monthlyReport, reminders,
-    defaultCategory, budgetLimit, autoCategorize, shared, twoFA,
-    pendingCategories.length, initialSettings
+    language,
+    currency,
+    alertLargeTx,
+    monthlyReport,
+    reminders,
+    defaultCategory,
+    budgetLimit,
+    autoCategorize,
+    shared,
+    twoFA,
+    pendingCategories.length,
+    initialSettings,
   ]);
 
   function handleQueueNewCategory(e) {
     e.preventDefault();
+    e.stopPropagation();
     if (!newCategory.trim()) return;
-    setPendingCategories(pendingCategories.concat([{
+
+    const queued = {
       name: newCategory.trim(),
-      type: newType
-    }]));
+      type: newType,
+    };
+
+    // Add to pending list for saving
+    setPendingCategories((prev) => prev.concat([queued]));
+
+    // Also optimistically add to categories so it shows up immediately
+    setCategories((prev) =>
+      prev.concat([
+        {
+          id: `local-${Date.now()}`, // temporary key
+          user_id: user ? user.id : null,
+          name: queued.name,
+          type: queued.type,
+        },
+      ])
+    );
+
     setNewCategory("");
     setNewType("expense");
   }
@@ -165,16 +191,46 @@ export default function SettingsPage() {
     // Update settings if changed
     let needProfileUpdate = false;
     const updates = {};
-    if (language !== initialSettings.language) { updates.language = language; needProfileUpdate = true; }
-    if (currency !== initialSettings.currency) { updates.currency = currency; needProfileUpdate = true; }
-    if (alertLargeTx !== initialSettings.alertLargeTx) { updates.alert_large_tx = alertLargeTx; needProfileUpdate = true; }
-    if (monthlyReport !== initialSettings.monthlyReport) { updates.monthly_report = monthlyReport; needProfileUpdate = true; }
-    if (reminders !== initialSettings.reminders) { updates.reminders = reminders; needProfileUpdate = true; }
-    if (defaultCategory !== initialSettings.defaultCategory) { updates.default_category = defaultCategory; needProfileUpdate = true; }
-    if (budgetLimit !== initialSettings.budgetLimit) { updates.budget_limit = budgetLimit; needProfileUpdate = true; }
-    if (autoCategorize !== initialSettings.autoCategorize) { updates.auto_categorize = autoCategorize; needProfileUpdate = true; }
-    if (shared !== initialSettings.shared) { updates.shared = shared; needProfileUpdate = true; }
-    if (twoFA !== initialSettings.twoFA) { updates.two_fa = twoFA; needProfileUpdate = true; }
+    if (language !== initialSettings.language) {
+      updates.language = language;
+      needProfileUpdate = true;
+    }
+    if (currency !== initialSettings.currency) {
+      updates.currency = currency;
+      needProfileUpdate = true;
+    }
+    if (alertLargeTx !== initialSettings.alertLargeTx) {
+      updates.alert_large_tx = alertLargeTx;
+      needProfileUpdate = true;
+    }
+    if (monthlyReport !== initialSettings.monthlyReport) {
+      updates.monthly_report = monthlyReport;
+      needProfileUpdate = true;
+    }
+    if (reminders !== initialSettings.reminders) {
+      updates.reminders = reminders;
+      needProfileUpdate = true;
+    }
+    if (defaultCategory !== initialSettings.defaultCategory) {
+      updates.default_category = defaultCategory;
+      needProfileUpdate = true;
+    }
+    if (budgetLimit !== initialSettings.budgetLimit) {
+      updates.budget_limit = budgetLimit;
+      needProfileUpdate = true;
+    }
+    if (autoCategorize !== initialSettings.autoCategorize) {
+      updates.auto_categorize = autoCategorize;
+      needProfileUpdate = true;
+    }
+    if (shared !== initialSettings.shared) {
+      updates.shared = shared;
+      needProfileUpdate = true;
+       }
+    if (twoFA !== initialSettings.twoFA) {
+      updates.two_fa = twoFA;
+      needProfileUpdate = true;
+    }
 
     if (needProfileUpdate) {
       await supabase
@@ -185,12 +241,24 @@ export default function SettingsPage() {
 
     // Insert pending categories
     if (pendingCategories.length) {
-      const inserts = pendingCategories.map(cat => ({
+      const inserts = pendingCategories.map((cat) => ({
         user_id: user.id,
         name: cat.name,
-        type: cat.type
+        type: cat.type,
       }));
-      await supabase.from("categories").insert(inserts);
+      const { data: inserted, error } = await supabase
+        .from("categories")
+        .insert(inserts)
+        .select();
+      if (!error && inserted) {
+        // Replace local temp entries with real ones
+        setCategories((prev) => {
+          const withoutTemps = prev.filter(
+            (c) => typeof c.id !== "string" || !c.id.startsWith("local-")
+          );
+          return withoutTemps.concat(inserted);
+        });
+      }
       setPendingCategories([]);
     }
 
@@ -228,14 +296,18 @@ export default function SettingsPage() {
   const handleExportCSV = () => {
     let csv = "";
     csv += "Expenses\nDate,Time,Category,Amount,Description\n";
-    expenses.forEach(e => {
+    expenses.forEach((e) => {
       const dt = splitDateTime(e.date, e.time, e.date_column);
-      csv += `${dt.date},${dt.time},${e.category},${e.amount},${e.description || ""}\n`;
+      csv += `${dt.date},${dt.time},${e.category},${e.amount},${
+        e.description || ""
+      }\n`;
     });
     csv += "\nIncome\nDate,Time,Category,Amount,Description\n";
-    income.forEach(i => {
+    income.forEach((i) => {
       const dt = splitDateTime(i.date, i.time, i.date_column);
-      csv += `${dt.date},${dt.time},${i.category},${i.amount},${i.description || ""}\n`;
+      csv += `${dt.date},${dt.time},${i.category},${i.amount},${
+        i.description || ""
+      }\n`;
     });
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
     const link = document.createElement("a");
@@ -263,36 +335,70 @@ export default function SettingsPage() {
     autoTable(doc, {
       startY: y + 20,
       margin: { left: marginLeft, right: marginLeft },
-      tableWidth: 'auto',
+      tableWidth: "auto",
       head: [["Date", "Time", "Category", "Amount", "Description"]],
-      body: expenses.map(e => {
+      body: expenses.map((e) => {
         const dt = splitDateTime(e.date, e.time, e.date_column);
-        return [dt.date, dt.time, e.category, `${currency}${e.amount}`, e.description || ""];
+        return [
+          dt.date,
+          dt.time,
+          e.category,
+          `${currency}${e.amount}`,
+          e.description || "",
+        ];
       }),
       headStyles: {
-        fillColor: [24, 35, 61], textColor: 255, fontSize: 13, fontStyle: 'bold', halign: 'center', font: fontName
+        fillColor: [24, 35, 61],
+        textColor: 255,
+        fontSize: 13,
+        fontStyle: "bold",
+        halign: "center",
+        font: fontName,
       },
-      styles: { font: fontName, fontSize: 12, halign: 'center', cellPadding: 7, minCellWidth: 70 },
+      styles: {
+        font: fontName,
+        fontSize: 12,
+        halign: "center",
+        cellPadding: 7,
+        minCellWidth: 70,
+      },
       alternateRowStyles: { fillColor: [245, 245, 245], textColor: 20 },
     });
 
-    y = doc.lastAutoTable.finalY + sectionSpacing;
+    y = (doc as any).lastAutoTable.finalY + sectionSpacing;
     doc.setFontSize(22);
     doc.text("Income", marginLeft, y);
 
     autoTable(doc, {
       startY: y + 20,
       margin: { left: marginLeft, right: marginLeft },
-      tableWidth: 'auto',
-      head: [["Date", "Time", "Category", "Amount", "Description"]],
-      body: income.map(i => {
+      tableWidth: "auto",
+      head: [["Date", "Time", "Category, Amount", "Description"]],
+      body: income.map((i) => {
         const dt = splitDateTime(i.date, i.time, i.date_column);
-        return [dt.date, dt.time, i.category, `${currency}${i.amount}`, i.description || ""];
+        return [
+          dt.date,
+          dt.time,
+          i.category,
+          `${currency}${i.amount}`,
+          i.description || "",
+        ];
       }),
       headStyles: {
-        fillColor: [25, 174, 54], textColor: 255, fontSize: 13, fontStyle: 'bold', halign: 'center', font: fontName
+        fillColor: [25, 174, 54],
+        textColor: 255,
+        fontSize: 13,
+        fontStyle: "bold",
+        halign: "center",
+        font: fontName,
       },
-      styles: { font: fontName, fontSize: 12, halign: 'center', cellPadding: 7, minCellWidth: 70 },
+      styles: {
+        font: fontName,
+        fontSize: 12,
+        halign: "center",
+        cellPadding: 7,
+        minCellWidth: 70,
+      },
       alternateRowStyles: { fillColor: [245, 245, 245], textColor: 20 },
     });
     doc.save("expenses_incomes.pdf");
@@ -320,53 +426,99 @@ export default function SettingsPage() {
 
   if (loading) {
     return (
-      <div style={{
-        minHeight: '100vh',
-        background: pageBg,
-        color: textColor,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center'
-      }}>
+      <div
+        style={{
+          minHeight: "100vh",
+          background: pageBg,
+          color: textColor,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
         Loading...
       </div>
     );
   }
 
   return (
-    <div style={{
-      minHeight: "100vh", width: "100vw", background: pageBg,
-      display: "flex", alignItems: "center", justifyContent: "center", padding: "24px 0"
-    }}>
+    <div
+      style={{
+        minHeight: "100vh",
+        width: "100vw",
+        background: pageBg,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "24px 0",
+      }}
+    >
       <form
         style={{
-          background: tableBg, borderRadius: 16,
+          background: tableBg,
+          borderRadius: 16,
           boxShadow: isDark ? "0 2px 18px #0008" : "0 2px 18px #1010130a",
           border: `1px solid ${isDark ? "#1f1f1f" : "#e5e7ea"}`,
-          padding: 40, maxWidth: 850, width: "100%"
+          padding: 40,
+          maxWidth: 850,
+          width: "100%",
         }}
         onSubmit={handleSave}
       >
-        <h1 style={{ textAlign: "center", color: thColor, marginBottom: 24 }}>Settings</h1>
-        <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: "0 10px" }}>
+        <h1
+          style={{
+            textAlign: "center",
+            color: thColor,
+            marginBottom: 24,
+          }}
+        >
+          Settings
+        </h1>
+        <table
+          style={{
+            width: "100%",
+            borderCollapse: "separate",
+            borderSpacing: "0 10px",
+          }}
+        >
           <tbody>
             {/* Account Section */}
-            <tr><th colSpan={2} style={{ color: thColor, fontSize: 18, textAlign: 'left', paddingBottom: 8 }}>Account</th></tr>
+            <tr>
+              <th
+                colSpan={2}
+                style={{
+                  color: thColor,
+                  fontSize: 18,
+                  textAlign: "left",
+                  paddingBottom: 8,
+                }}
+              >
+                Account
+              </th>
+            </tr>
             <tr>
               <td style={{ color: labelColor }}>Username</td>
-              <td><input value={username} style={inputBase(isDark)} readOnly /></td>
+              <td>
+                <input value={username} style={inputBase(isDark)} readOnly />
+              </td>
             </tr>
             <tr>
               <td style={{ color: labelColor }}>Email</td>
               <td>
-                <input type="email" value={email} style={inputBase(isDark)} readOnly />
+                <input
+                  type="email"
+                  value={email}
+                  style={inputBase(isDark)}
+                  readOnly
+                />
               </td>
             </tr>
             {/* Change Password button */}
             <tr>
               <td></td>
-              <td style={{ display: 'flex', alignItems: "center" }}>
-                <button type="button"
+              <td style={{ display: "flex", alignItems: "center" }}>
+                <button
+                  type="button"
                   style={{
                     ...miniBtn(isDark),
                     width: 170,
@@ -374,42 +526,64 @@ export default function SettingsPage() {
                     marginBottom: 10,
                     fontWeight: 600,
                     background: "#3b52eb",
-                    color: "#fff"
+                    color: "#fff",
                   }}
-                  onClick={() => setShowPasswordModal(true)}>
+                  onClick={() => setShowPasswordModal(true)}
+                >
                   Change Password
                 </button>
               </td>
             </tr>
             {/* Preferences Section */}
-            <tr><th colSpan={2} style={{ textAlign: 'left', color: thColor, fontSize: 18, padding: '18px 0 8px 0' }}>Preferences</th></tr>
-            <tr><td style={{ color: labelColor }}>Language</td>
+            <tr>
+              <th
+                colSpan={2}
+                style={{
+                  textAlign: "left",
+                  color: thColor,
+                  fontSize: 18,
+                  padding: "18px 0 8px 0",
+                }}
+              >
+                Preferences
+              </th>
+            </tr>
+            <tr>
+              <td style={{ color: labelColor }}>Language</td>
               <td>
-                <select value={language}
-                  onChange={e => setLanguage(e.target.value)}
-                  style={inputBase(isDark)}>
+                <select
+                  value={language}
+                  onChange={(e) => setLanguage(e.target.value)}
+                  style={inputBase(isDark)}
+                >
                   <option>English</option>
                   <option>Kannada</option>
                   <option>Hindi</option>
                 </select>
               </td>
             </tr>
-            <tr><td style={{ color: labelColor }}>Currency</td>
+            <tr>
+              <td style={{ color: labelColor }}>Currency</td>
               <td>
-                <select value={currency}
-                  onChange={e => setCurrency(e.target.value)}
-                  style={inputBase(isDark)}>
+                <select
+                  value={currency}
+                  onChange={(e) => setCurrency(e.target.value)}
+                  style={inputBase(isDark)}
+                >
                   <option>₹</option>
                   <option>$</option>
                   <option>€</option>
                 </select>
               </td>
             </tr>
-            <tr><td style={{ color: labelColor }}>Theme</td>
+            <tr>
+              <td style={{ color: labelColor }}>Theme</td>
               <td>
-                <select value={theme}
-                  onChange={e => setTheme(e.target.value)}
-                  style={inputBase(isDark)}>
+                <select
+                  value={theme}
+                  onChange={(e) => setTheme(e.target.value)}
+                  style={inputBase(isDark)}
+                >
                   <option value="light">Light</option>
                   <option value="dark">Dark</option>
                 </select>
@@ -417,26 +591,55 @@ export default function SettingsPage() {
             </tr>
             <tr>
               <td style={{ color: labelColor }}>Notifications</td>
-              <td style={{ display: 'flex', gap: 24 }}>
+              <td style={{ display: "flex", gap: 24 }}>
                 <label style={checkboxLabel(isDark)}>
-                  <input type="checkbox" checked={alertLargeTx} onChange={() => setAlertLargeTx(v => !v)} /> Large Tx Alerts
+                  <input
+                    type="checkbox"
+                    checked={alertLargeTx}
+                    onChange={() => setAlertLargeTx((v) => !v)}
+                  />{" "}
+                  Large Tx Alerts
                 </label>
                 <label style={checkboxLabel(isDark)}>
-                  <input type="checkbox" checked={monthlyReport} onChange={() => setMonthlyReport(v => !v)} /> Monthly Report
+                  <input
+                    type="checkbox"
+                    checked={monthlyReport}
+                    onChange={() => setMonthlyReport((v) => !v)}
+                  />{" "}
+                  Monthly Report
                 </label>
                 <label style={checkboxLabel(isDark)}>
-                  <input type="checkbox" checked={reminders} onChange={() => setReminders(v => !v)} /> Reminders
+                  <input
+                    type="checkbox"
+                    checked={reminders}
+                    onChange={() => setReminders((v) => !v)}
+                  />{" "}
+                  Reminders
                 </label>
               </td>
             </tr>
             {/* Expense Features Section */}
-            <tr><th colSpan={2} style={{ color: thColor, fontSize: 18, textAlign: 'left', padding: '18px 0 8px 0' }}>Expense Features</th></tr>
+            <tr>
+              <th
+                colSpan={2}
+                style={{
+                  color: thColor,
+                  fontSize: 18,
+                  textAlign: "left",
+                  padding: "18px 0 8px 0",
+                }}
+              >
+                Expense Features
+              </th>
+            </tr>
             <tr>
               <td style={{ color: labelColor }}>Default Category</td>
               <td>
-                <select value={defaultCategory}
-                  onChange={e => setDefaultCategory(e.target.value)}
-                  style={inputBase(isDark)}>
+                <select
+                  value={defaultCategory}
+                  onChange={(e) => setDefaultCategory(e.target.value)}
+                  style={inputBase(isDark)}
+                >
                   <option>Food</option>
                   <option>Bills</option>
                   <option>Shopping</option>
@@ -447,8 +650,11 @@ export default function SettingsPage() {
             <tr>
               <td style={{ color: labelColor }}>Budget Limit</td>
               <td>
-                <input type="number" min={0} value={budgetLimit}
-                  onChange={e => setBudgetLimit(Number(e.target.value))}
+                <input
+                  type="number"
+                  min={0}
+                  value={budgetLimit}
+                  onChange={(e) => setBudgetLimit(Number(e.target.value))}
                   style={inputBase(isDark)}
                 />
               </td>
@@ -456,61 +662,105 @@ export default function SettingsPage() {
             <tr>
               <td style={{ color: labelColor }}>Auto-categorize</td>
               <td>
-                <input type="checkbox" checked={autoCategorize}
-                  onChange={() => setAutoCategorize(v => !v)} />
+                <input
+                  type="checkbox"
+                  checked={autoCategorize}
+                  onChange={() => setAutoCategorize((v) => !v)}
+                />
               </td>
             </tr>
             <tr>
               <td style={{ color: labelColor }}>Shared Accounts/Family</td>
               <td>
-                <input type="checkbox"
+                <input
+                  type="checkbox"
                   checked={shared}
-                  onChange={() => setShared(v => !v)} />
+                  onChange={() => setShared((v) => !v)}
+                />
               </td>
             </tr>
             {/* Category Management */}
             <tr>
-              <th colSpan={2} style={{ color: thColor, fontSize: 18, textAlign: 'left', padding: '18px 0 8px 0' }}>Category Management</th>
+              <th
+                colSpan={2}
+                style={{
+                  color: thColor,
+                  fontSize: 18,
+                  textAlign: "left",
+                  padding: "18px 0 8px 0",
+                }}
+              >
+                Category Management
+              </th>
             </tr>
             <tr>
               <td colSpan={2}>
-                <form onSubmit={handleQueueNewCategory} style={{ marginBottom: 16, display: "flex", gap: 8 }}>
+                <div
+                  style={{
+                    marginBottom: 16,
+                    display: "flex",
+                    gap: 8,
+                  }}
+                >
                   <input
                     value={newCategory}
-                    onChange={e => setNewCategory(e.target.value)}
+                    onChange={(e) => setNewCategory(e.target.value)}
                     placeholder="New category name"
                     style={inputBase(isDark)}
                   />
                   <select
                     value={newType}
-                    onChange={e => setNewType(e.target.value)}
-                    style={inputBase(isDark)}>
+                    onChange={(e) => setNewType(e.target.value)}
+                    style={inputBase(isDark)}
+                  >
                     <option value="expense">Expense</option>
                     <option value="income">Income</option>
                   </select>
-                  <button type="submit" style={miniBtn(isDark)}>Add</button>
-                </form>
+                  <button
+                    type="button"
+                    style={miniBtn(isDark)}
+                    onClick={handleQueueNewCategory}
+                  >
+                    Add
+                  </button>
+                </div>
 
-                {/* CSV/PDF Download buttons, full width, one under the other */}
-                <div style={{ marginBottom: 16, display: "flex", flexDirection: "column", gap: 10, width: 220 }}>
-                  <button type="button" style={{
-                    ...miniBtn(isDark),
-                    minWidth: 160,
-                    width: "100%",
-                    background: "#2b6af4",
-                    color: "#fff",
-                    fontWeight: 500
-                  }} onClick={handleExportCSV}>
+                {/* CSV/PDF Download buttons */}
+                <div
+                  style={{
+                    marginBottom: 16,
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 10,
+                    width: 220,
+                  }}
+                >
+                  <button
+                    type="button"
+                    style={{
+                      ...miniBtn(isDark),
+                      minWidth: 160,
+                      width: "100%",
+                      background: "#2b6af4",
+                      color: "#fff",
+                      fontWeight: 500,
+                    }}
+                    onClick={handleExportCSV}
+                  >
                     Download CSV
                   </button>
-                  <button type="button" style={{
-                    ...miniBtn(isDark),
-                    minWidth: 160,
-                    width: "100%",
-                    background: "#4a3bb7",
-                    color: "#fff",
-                    fontWeight: 500
-                  }} onClick={handleExportPDF}>
+                  <button
+                    type="button"
+                    style={{
+                      ...miniBtn(isDark),
+                      minWidth: 160,
+                      width: "100%",
+                      background: "#4a3bb7",
+                      color: "#fff",
+                      fontWeight: 500,
+                    }}
+                    onClick={handleExportPDF}
+                  >
                     Download PDF
                   </button>
                 </div>
@@ -523,7 +773,7 @@ export default function SettingsPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {categories.map(c => (
+                    {categories.map((c) => (
                       <tr key={c.id}>
                         <td>{c.name}</td>
                         <td>{capitalize(c.type)}</td>
@@ -534,36 +784,78 @@ export default function SettingsPage() {
               </td>
             </tr>
             {/* Security & Privacy */}
-            <tr><th colSpan={2} style={{ color: thColor, fontSize: 18, textAlign: 'left', padding: '18px 0 8px 0' }}>Security & Privacy</th></tr>
             <tr>
-              <td style={{ color: labelColor }}>Two-Factor Authentication (2FA)</td>
+              <th
+                colSpan={2}
+                style={{
+                  color: thColor,
+                  fontSize: 18,
+                  textAlign: "left",
+                  padding: "18px 0 8px 0",
+                }}
+              >
+                Security & Privacy
+              </th>
+            </tr>
+            <tr>
+              <td style={{ color: labelColor }}>
+                Two-Factor Authentication (2FA)
+              </td>
               <td>
-                <input type="checkbox"
+                <input
+                  type="checkbox"
                   checked={twoFA}
-                  onChange={() => setTwoFA(v => !v)}
+                  onChange={() => setTwoFA((v) => !v)}
                 />
               </td>
             </tr>
             <tr>
               <td style={{ color: labelColor }}>Session Management</td>
               <td>
-                <button type="button" style={miniBtn(isDark)}>View Devices</button>
+                <button type="button" style={miniBtn(isDark)}>
+                  View Devices
+                </button>
               </td>
             </tr>
             <tr>
               <td style={{ color: labelColor }}>Privacy Controls</td>
               <td>
-                <button type="button" style={miniBtn(isDark)}>Set Data Visibility</button>
-                <button type="button" style={miniBtn(isDark)}>Delete Account</button>
+                <button type="button" style={miniBtn(isDark)}>
+                  Set Data Visibility
+                </button>
+                <button type="button" style={miniBtn(isDark)}>
+                  Delete Account
+                </button>
               </td>
             </tr>
             {/* Support & Miscellaneous */}
-            <tr><th colSpan={2} style={{ color: thColor, fontSize: 18, textAlign: 'left', padding: '18px 0 8px 0' }}>Support & Miscellaneous</th></tr>
             <tr>
-              <td colSpan={2} style={{ textAlign: 'center', color: textColor }}>
-                <button type="button" style={miniBtn(isDark)}>Help Center / FAQs</button>
-                <button type="button" style={miniBtn(isDark)}>Contact Support</button>
-                <button type="button" style={miniBtn(isDark)}>Send Feedback</button>
+              <th
+                colSpan={2}
+                style={{
+                  color: thColor,
+                  fontSize: 18,
+                  textAlign: "left",
+                  padding: "18px 0 8px 0",
+                }}
+              >
+                Support & Miscellaneous
+              </th>
+            </tr>
+            <tr>
+              <td
+                colSpan={2}
+                style={{ textAlign: "center", color: textColor }}
+              >
+                <button type="button" style={miniBtn(isDark)}>
+                  Help Center / FAQs
+                </button>
+                <button type="button" style={miniBtn(isDark)}>
+                  Contact Support
+                </button>
+                <button type="button" style={miniBtn(isDark)}>
+                  Send Feedback
+                </button>
               </td>
             </tr>
             <tr>
@@ -576,49 +868,106 @@ export default function SettingsPage() {
             </tr>
           </tbody>
         </table>
-        <div style={{
-          display: "flex", gap: 16, justifyContent: "center",
-          marginTop: 40, flexWrap: "wrap"
-        }}>
-          <button type="submit"
+        <div
+          style={{
+            display: "flex",
+            gap: 16,
+            justifyContent: "center",
+            marginTop: 40,
+            flexWrap: "wrap",
+          }}
+        >
+          <button
+            type="submit"
             style={{
               ...saveBtnStyle,
               opacity: settingsChanged ? 1 : 0.4,
               filter: settingsChanged ? "none" : "grayscale(0.85)",
-              pointerEvents: settingsChanged ? "auto" : "none"
+              pointerEvents: settingsChanged ? "auto" : "none",
             }}
             disabled={!settingsChanged}
           >
             Save Changes
           </button>
-          <button type="button" style={cancelBtn(isDark)} onClick={handleCancel}>Cancel</button>
-          <button type="button" style={logoutBtnStyle} onClick={() => {
-            supabase.auth.signOut();
-            navigate("/");
-          }}>Log Out</button>
+          <button
+            type="button"
+            style={cancelBtn(isDark)}
+            onClick={handleCancel}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            style={logoutBtnStyle}
+            onClick={() => {
+              supabase.auth.signOut();
+              navigate("/");
+            }}
+          >
+            Log Out
+          </button>
         </div>
       </form>
 
       {/* Password Change Modal */}
       {showPasswordModal && (
-        <div style={{
-          position: "fixed", left: 0, top: 0, width: "100vw", height: "100vh",
-          background: "#0008", display: "flex", alignItems: "center",
-          justifyContent: "center", zIndex: 1000
-        }}>
-          <div style={{
-            background: tableBg, borderRadius: 12, padding: 28,
-            minWidth: 280, maxWidth: 350
-          }}>
-            <h3 style={{ color: thColor, marginBottom: 16 }}>Change Password</h3>
+        <div
+          style={{
+            position: "fixed",
+            left: 0,
+            top: 0,
+            width: "100vw",
+            height: "100vh",
+            background: "#0008",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 1000,
+          }}
+        >
+          <div
+            style={{
+              background: tableBg,
+              borderRadius: 12,
+              padding: 28,
+              minWidth: 280,
+              maxWidth: 350,
+            }}
+          >
+            <h3 style={{ color: thColor, marginBottom: 16 }}>
+              Change Password
+            </h3>
             <form onSubmit={handlePasswordChange}>
-              <input type="password" placeholder="New password" minLength={6}
-                autoFocus value={newPassword} onChange={e => setNewPassword(e.target.value)} style={inputBase(isDark)} />
-              {pwError && <div style={{ color: "#f34747", marginBottom: 8 }}>{pwError}</div>}
-              {pwSuccess && <div style={{ color: "#34c759", marginBottom: 8 }}>Password changed!</div>}
+              <input
+                type="password"
+                placeholder="New password"
+                minLength={6}
+                autoFocus
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                style={inputBase(isDark)}
+              />
+              {pwError && (
+                <div style={{ color: "#f34747", marginBottom: 8 }}>
+                  {pwError}
+                </div>
+              )}
+              {pwSuccess && (
+                <div style={{ color: "#34c759", marginBottom: 8 }}>
+                  Password changed!
+                </div>
+              )}
               <div style={{ display: "flex", gap: 12, marginTop: 16 }}>
-                <button type="submit" disabled={pwChanging} style={saveBtnStyle}>Change</button>
-                <button type="button" style={cancelBtn(isDark)} onClick={() => setShowPasswordModal(false)}>Cancel</button>
+                <button type="submit" disabled={pwChanging} style={saveBtnStyle}>
+                  Change
+                </button>
+                <button
+                  type="button"
+                  style={cancelBtn(isDark)}
+                  onClick={() => setShowPasswordModal(false)}
+                >
+                  Cancel
+                </button>
               </div>
             </form>
           </div>

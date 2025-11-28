@@ -248,7 +248,7 @@ export default function AIExpenseSync() {
     }
   };
 
-  // AI chat handler
+  // AI chat handler (UPDATED to send statementExpenses)
   const handleSendChat = async () => {
     if (!chatInput.trim()) return;
 
@@ -272,6 +272,14 @@ export default function AIExpenseSync() {
         body: JSON.stringify({
           user_id: user.id,
           question: userMsg.content,
+          // send the currently parsed statement rows so the backend can use them
+          statementExpenses: editingExpenses.map((exp) => ({
+            date: exp.date,
+            merchant: exp.merchant,
+            category: exp.category,
+            amount: exp.amount,
+            type: exp.type,
+          })),
         }),
       });
 
